@@ -1,0 +1,14 @@
+.{
+    .name = .bitchat,
+    .version = "0.0.0",
+    .fingerprint = 0xe635b799896aa5f6,
+    .minimum_zig_version = "0.14.1",
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        //"LICENSE.md",
+        //"README.md",
+    },
+}
