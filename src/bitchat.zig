@@ -1,9 +1,9 @@
-pub const HEADER_SIZE: usize = 14;
-pub const SENDER_ID_SIZE: usize = 8;
-pub const RECIPIENT_ID_SIZE: usize = 8;
-pub const SIGNATURE_SIZE: usize = 64;
-pub const MAX_PACKET_SIZE = HEADER_SIZE + SENDER_ID_SIZE + RECIPIENT_ID_SIZE + SIGNATURE_SIZE + std.math.maxInt(u16);
-pub const BROADCAST_RECIPIENT: u64 = 0xFFFFFFFFFFFFFFFF;
+pub const header_size: usize = 14;
+pub const sender_id_size: usize = 8;
+pub const recipient_id_size: usize = 8;
+pub const signature_size: usize = 64;
+pub const max_packet_size = header_size + sender_id_size + recipient_id_size + signature_size + std.math.maxInt(u16);
+pub const broadcast_recipient: u64 = 0xFFFFFFFFFFFFFFFF;
 
 pub const Packet = struct {
     version: u8,
@@ -11,9 +11,9 @@ pub const Packet = struct {
     ttl: u8,
     timestamp: u64,
     flags: packed struct {
-        hasRecipient: bool,
-        hasSignature: bool,
-        isCompressed: bool,
+        has_recipient: bool,
+        has_signature: bool,
+        is_compressed: bool,
         padding: u5,
     },
     payload: []const u8,
@@ -36,9 +36,9 @@ pub const Packet = struct {
             .payload_length = @intCast(payload.len),
             .signature = signature,
             .flags = .{
-                .hasRecipient = recipientID != null,
-                .hasSignature = signature != null,
-                .isCompressed = false,
+                .has_recipient = recipientID != null,
+                .has_signature = signature != null,
+                .is_compressed = false,
                 .padding = 0,
             },
         };
@@ -50,14 +50,14 @@ pub const Packet = struct {
         InvalidPacketDataLength,
         InvalidMessageType,
     }!Packet {
-        if (message.len < HEADER_SIZE + SENDER_ID_SIZE)
+        if (message.len < header_size + sender_id_size)
             return error.InvalidPacketSize;
 
         var packet: Packet = undefined;
         var data = message;
         packet.version = data[0];
         data.ptr += 1;
-        if (data.len < HEADER_SIZE + SENDER_ID_SIZE)
+        if (data.len < header_size + sender_id_size)
             return error.InvalidPacketVersion;
 
         packet.type = try MessageType.parse(data[0]);
@@ -75,22 +75,18 @@ pub const Packet = struct {
         packet.payload_length = std.mem.readInt(u16, data[0..2], .big);
         data.ptr += 2;
 
-        var expected_size = HEADER_SIZE + SENDER_ID_SIZE + packet.payload_length;
-        if (packet.flags.hasRecipient) expected_size += RECIPIENT_ID_SIZE;
-        if (packet.flags.hasSignature) expected_size += SIGNATURE_SIZE;
+        var expected_size = header_size + sender_id_size + packet.payload_length;
+        if (packet.flags.has_recipient) expected_size += recipient_id_size;
+        if (packet.flags.has_signature) expected_size += signature_size;
 
         if (data.len != expected_size) {
-            //err(
-            //    "Expected packet size {d}, found {d}",
-            //    .{ expected_size, data.len },
-            //);
             return error.InvalidPacketDataLength;
         }
 
         packet.sender_id = std.mem.readInt(u64, data[0..8], .big);
         data.ptr += 8;
 
-        if (packet.flags.hasRecipient) {
+        if (packet.flags.has_recipient) {
             packet.recipient_id = std.mem.readInt(u64, data[0..8], .big);
             data.ptr += 8;
         } else {
@@ -100,7 +96,7 @@ pub const Packet = struct {
         packet.payload = data[0..packet.payload_length];
         data.ptr += packet.payload_length;
 
-        if (packet.flags.hasSignature) {
+        if (packet.flags.has_signature) {
             packet.signature = data[0..64];
             data.ptr += 64;
         } else {
@@ -115,8 +111,8 @@ pub const Packet = struct {
             return error.PayloadTooLarge;
         packet.payload_length = @intCast(packet.payload.len);
 
-        packet.flags.hasSignature = packet.signature != null;
-        packet.flags.hasRecipient = packet.recipient_id != null;
+        packet.flags.has_signature = packet.signature != null;
+        packet.flags.has_recipient = packet.recipient_id != null;
 
         var tmp: [8]u8 = undefined;
         buffer.appendAssumeCapacity(packet.version);
@@ -188,49 +184,58 @@ pub const MessageType = enum(u8) {
 
 const assert = std.debug.assert;
 const std = @import("std");
-const err = std.log.err;
-const debug = std.log.debug;
 const testing = std.testing;
+const ArrayListUnmanaged = std.ArrayListUnmanaged;
+const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
+const expectEqualSlices = std.testing.expectEqualSlices;
+const expectEqualStrings = std.testing.expectEqualStrings;
 
 test "packet_flags" {
     var packet: Packet = undefined;
-    packet.flags.hasRecipient = false;
-    packet.flags.hasSignature = false;
-    packet.flags.isCompressed = false;
+    packet.flags.has_recipient = false;
+    packet.flags.has_signature = false;
+    packet.flags.is_compressed = false;
     packet.flags.padding = 0;
     try expectEqual(0, @as(u8, @bitCast(packet.flags)));
-    packet.flags.hasRecipient = true;
-    packet.flags.hasSignature = true;
-    packet.flags.isCompressed = true;
+    packet.flags.has_recipient = true;
+    packet.flags.has_signature = true;
+    packet.flags.is_compressed = true;
     try expectEqual(7, @as(u8, @bitCast(packet.flags)));
-    packet.flags.hasRecipient = false;
+    packet.flags.has_recipient = false;
     try expectEqual(6, @as(u8, @bitCast(packet.flags)));
 }
 
 test "read_packet_no_recipient" {
-    // Packet without recipient
-    const data: []const u8 = &[22]u8{ 1, 2, 3, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8 };
-    var packet = try Packet.read(data);
-    try testing.expectEqual(1, packet.version);
-    try testing.expectEqual(.key_exchange, packet.type);
-    try testing.expectEqual(3, packet.ttl);
-    try testing.expectEqual(72623859790382856, packet.timestamp);
-    try testing.expectEqual(false, packet.flags.hasRecipient);
-    try testing.expectEqual(false, packet.flags.hasSignature);
-    try testing.expectEqual(false, packet.flags.isCompressed);
-    try testing.expectEqual(0, packet.payload_length);
-    try testing.expectEqual(72623859790382856, packet.sender_id);
-    try testing.expectEqual(null, packet.recipient_id);
-    try testing.expectEqual(null, packet.signature);
+    const allocator = std.testing.allocator;
 
-    var buffer = try std.ArrayListUnmanaged(u8).initCapacity(std.testing.allocator, MAX_PACKET_SIZE);
+    // Packet without recipient
+    const data: []const u8 = &[22]u8{
+        1, 2, 3, 1, 2, 3, 4, 5, 6, 7, 8,
+        0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8,
+    };
+    var packet = try Packet.read(data);
+    try expectEqual(1, packet.version);
+    try expectEqual(.key_exchange, packet.type);
+    try expectEqual(3, packet.ttl);
+    try expectEqual(72623859790382856, packet.timestamp);
+    try expectEqual(false, packet.flags.has_recipient);
+    try expectEqual(false, packet.flags.has_signature);
+    try expectEqual(false, packet.flags.is_compressed);
+    try expectEqual(0, packet.payload_length);
+    try expectEqual(72623859790382856, packet.sender_id);
+    try expectEqual(null, packet.recipient_id);
+    try expectEqual(null, packet.signature);
+
+    var buffer = try ArrayListUnmanaged(u8).initCapacity(allocator, max_packet_size);
     defer buffer.deinit(std.testing.allocator);
     try packet.write(&buffer);
-    try testing.expectEqualSlices(u8, data, buffer.items);
+    try expectEqualSlices(u8, data, buffer.items);
 }
 
 test "read_packet_with_recipient" {
+    const allocator = std.testing.allocator;
+
     // Packet with recipient
     const data: []const u8 = &[94]u8{
         1, 2, 3, 1, 2, 3, 4, 5, 6, 7, 8, 255, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8,
@@ -240,50 +245,57 @@ test "read_packet_with_recipient" {
         9, 9, 9, 9, 9, 9,
     };
     var packet = try Packet.read(data);
-    try testing.expectEqual(1, packet.version);
-    try testing.expectEqual(.key_exchange, packet.type);
-    try testing.expectEqual(3, packet.ttl);
-    try testing.expectEqual(true, packet.flags.hasRecipient);
-    try testing.expectEqual(true, packet.flags.hasSignature);
-    try testing.expectEqual(true, packet.flags.isCompressed);
-    try testing.expectEqual(72623859790382856, packet.timestamp);
-    try testing.expectEqual(72623859790382856, packet.sender_id);
-    try testing.expect(packet.recipient_id != null);
-    try testing.expectEqual(72623859790382856, packet.recipient_id.?);
-    try testing.expect(packet.signature != null);
-    try testing.expectEqual(4, packet.signature.?[0]);
-    try testing.expectEqual(9, packet.signature.?[63]);
+    try expectEqual(1, packet.version);
+    try expectEqual(.key_exchange, packet.type);
+    try expectEqual(3, packet.ttl);
+    try expectEqual(true, packet.flags.has_recipient);
+    try expectEqual(true, packet.flags.has_signature);
+    try expectEqual(true, packet.flags.is_compressed);
+    try expectEqual(72623859790382856, packet.timestamp);
+    try expectEqual(72623859790382856, packet.sender_id);
+    try expect(packet.recipient_id != null);
+    try expectEqual(72623859790382856, packet.recipient_id.?);
+    try expect(packet.signature != null);
+    try expectEqual(4, packet.signature.?[0]);
+    try expectEqual(9, packet.signature.?[63]);
 
-    var buffer = try std.ArrayListUnmanaged(u8).initCapacity(std.testing.allocator, MAX_PACKET_SIZE);
+    var buffer = try std.ArrayListUnmanaged(u8).initCapacity(allocator, max_packet_size);
     defer buffer.deinit(std.testing.allocator);
     try packet.write(&buffer);
-    try testing.expectEqualSlices(u8, data, buffer.items);
+    try expectEqualSlices(u8, data, buffer.items);
 }
 
 test "read_packet_no_recipient_has_message" {
-    // Packet without recipient
-    const data: []const u8 = &[25]u8{ 1, 2, 3, 1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 3, 1, 2, 3, 4, 5, 6, 7, 8, 'A', 'B', 'C' };
-    var packet = try Packet.read(data);
-    try testing.expectEqual(1, packet.version);
-    try testing.expectEqual(.key_exchange, packet.type);
-    try testing.expectEqual(3, packet.ttl);
-    try testing.expectEqual(72623859790382856, packet.timestamp);
-    try testing.expectEqual(false, packet.flags.hasRecipient);
-    try testing.expectEqual(false, packet.flags.hasSignature);
-    try testing.expectEqual(false, packet.flags.isCompressed);
-    try testing.expectEqual(3, packet.payload_length);
-    try testing.expectEqualStrings("ABC", packet.payload);
-    try testing.expectEqual(72623859790382856, packet.sender_id);
-    try testing.expectEqual(null, packet.recipient_id);
-    try testing.expectEqual(null, packet.signature);
+    const allocator = std.testing.allocator;
 
-    var buffer = try std.ArrayListUnmanaged(u8).initCapacity(std.testing.allocator, MAX_PACKET_SIZE);
+    // Packet without recipient
+    const data: []const u8 = &[25]u8{
+        1, 2, 3, 1, 2, 3, 4, 5, 6, 7,   8,   0,   0,
+        3, 1, 2, 3, 4, 5, 6, 7, 8, 'A', 'B', 'C',
+    };
+    var packet = try Packet.read(data);
+    try expectEqual(1, packet.version);
+    try expectEqual(.key_exchange, packet.type);
+    try expectEqual(3, packet.ttl);
+    try expectEqual(72623859790382856, packet.timestamp);
+    try expectEqual(false, packet.flags.has_recipient);
+    try expectEqual(false, packet.flags.has_signature);
+    try expectEqual(false, packet.flags.is_compressed);
+    try expectEqual(3, packet.payload_length);
+    try expectEqualStrings("ABC", packet.payload);
+    try expectEqual(72623859790382856, packet.sender_id);
+    try expectEqual(null, packet.recipient_id);
+    try expectEqual(null, packet.signature);
+
+    var buffer = try ArrayListUnmanaged(u8).initCapacity(allocator, max_packet_size);
     defer buffer.deinit(std.testing.allocator);
     try packet.write(&buffer);
-    try testing.expectEqualSlices(u8, data, buffer.items);
+    try expectEqualSlices(u8, data, buffer.items);
 }
 
 test "read_packet_with_recipient_and_message" {
+    const allocator = std.testing.allocator;
+
     // Packet with recipient
     const data: []const u8 = &[97]u8{
         1, 12, 3, 1, 2, 3, 4, 5, 6,   7,   8,   255, 0, 3, 1, 2, 3, 4, 5, 6, 7, 8,
@@ -293,35 +305,48 @@ test "read_packet_with_recipient_and_message" {
         6, 9,  9, 9, 9, 9, 9, 9, 9,
     };
     var packet = try Packet.read(data);
-    try testing.expectEqual(1, packet.version);
-    try testing.expectEqual(.read_receipt, packet.type);
-    try testing.expectEqual(3, packet.ttl);
-    try testing.expectEqual(true, packet.flags.hasRecipient);
-    try testing.expectEqual(true, packet.flags.hasSignature);
-    try testing.expectEqual(true, packet.flags.isCompressed);
-    try testing.expectEqual(72623859790382856, packet.timestamp);
-    try testing.expectEqual(72623859790382856, packet.sender_id);
-    try testing.expect(packet.recipient_id != null);
-    try testing.expectEqual(3, packet.payload_length);
-    try testing.expectEqualStrings("ABC", packet.payload);
-    try testing.expectEqual(72623859790382856, packet.recipient_id.?);
-    try testing.expect(packet.signature != null);
-    try testing.expectEqualStrings("ABC", packet.payload);
-    try testing.expectEqual(9, packet.signature.?[63]);
+    try expectEqual(1, packet.version);
+    try expectEqual(.read_receipt, packet.type);
+    try expectEqual(3, packet.ttl);
+    try expectEqual(true, packet.flags.has_recipient);
+    try expectEqual(true, packet.flags.has_signature);
+    try expectEqual(true, packet.flags.is_compressed);
+    try expectEqual(72623859790382856, packet.timestamp);
+    try expectEqual(72623859790382856, packet.sender_id);
+    try expect(packet.recipient_id != null);
+    try expectEqual(3, packet.payload_length);
+    try expectEqualStrings("ABC", packet.payload);
+    try expectEqual(72623859790382856, packet.recipient_id.?);
+    try expect(packet.signature != null);
+    try expectEqualStrings("ABC", packet.payload);
+    try expectEqual(9, packet.signature.?[63]);
 
-    var buffer = try std.ArrayListUnmanaged(u8).initCapacity(std.testing.allocator, MAX_PACKET_SIZE);
+    var buffer = try ArrayListUnmanaged(u8).initCapacity(allocator, max_packet_size);
     defer buffer.deinit(std.testing.allocator);
     try packet.write(&buffer);
-    try testing.expectEqualSlices(u8, data, buffer.items);
+    try expectEqualSlices(u8, data, buffer.items);
 
-    const sig: []const u8 = &[64]u8{ 4, 4, 4, 4, 4, 4, 4, 4, 5, 5, 5, 5, 5, 5, 5, 5, 6, 6, 6, 6, 6, 6, 6, 6, 9, 9, 9, 9, 9, 9, 9, 9, 4, 4, 4, 4, 4, 4, 4, 4, 5, 5, 5, 5, 5, 5, 5, 5, 6, 6, 6, 6, 6, 6, 6, 6, 9, 9, 9, 9, 9, 9, 9, 9 };
-    const packet2 = try Packet.init(.read_receipt, 72623859790382856, 72623859790382856, 72623859790382856, "ABC", sig, 3);
+    const sig: []const u8 = &[signature_size]u8{
+        4, 4, 4, 4, 4, 4, 4, 4, 5, 5, 5, 5, 5, 5, 5, 5,
+        6, 6, 6, 6, 6, 6, 6, 6, 9, 9, 9, 9, 9, 9, 9, 9,
+        4, 4, 4, 4, 4, 4, 4, 4, 5, 5, 5, 5, 5, 5, 5, 5,
+        6, 6, 6, 6, 6, 6, 6, 6, 9, 9, 9, 9, 9, 9, 9, 9,
+    };
+    const packet2 = try Packet.init(
+        .read_receipt,
+        72623859790382856,
+        72623859790382856,
+        72623859790382856,
+        "ABC",
+        sig,
+        3,
+    );
     try testing.expectEqual(1, packet2.version);
     try testing.expectEqual(.read_receipt, packet2.type);
     try testing.expectEqual(3, packet2.ttl);
-    try testing.expectEqual(true, packet2.flags.hasRecipient);
-    try testing.expectEqual(true, packet2.flags.hasSignature);
-    try testing.expectEqual(false, packet2.flags.isCompressed);
+    try testing.expectEqual(true, packet2.flags.has_recipient);
+    try testing.expectEqual(true, packet2.flags.has_signature);
+    try testing.expectEqual(false, packet2.flags.is_compressed);
     try testing.expectEqual(72623859790382856, packet2.timestamp);
     try testing.expectEqual(72623859790382856, packet2.sender_id);
     try testing.expect(packet2.recipient_id != null);
