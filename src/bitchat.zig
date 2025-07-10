@@ -2,7 +2,7 @@ pub const header_size: usize = 14;
 pub const sender_id_size: usize = 8;
 pub const recipient_id_size: usize = 8;
 pub const signature_size: usize = 64;
-pub const max_packet_size = header_size + sender_id_size + recipient_id_size + signature_size + std.math.maxInt(u16);
+pub const max_packet_size: usize = header_size + sender_id_size + recipient_id_size + signature_size + std.math.maxInt(u16);
 pub const broadcast_recipient: u64 = 0xFFFFFFFFFFFFFFFF;
 
 pub const Packet = struct {
@@ -22,7 +22,15 @@ pub const Packet = struct {
     recipient_id: ?u64,
     signature: ?[]const u8,
 
-    pub fn init(message_type: MessageType, senderID: u64, recipientID: ?u64, timestamp: u64, payload: []const u8, signature: ?[]const u8, ttl: u8) error{PayloadTooLarge}!Packet {
+    pub fn init(
+        message_type: MessageType,
+        senderID: u64,
+        recipientID: ?u64,
+        timestamp: u64,
+        payload: []const u8,
+        signature: ?[]const u8,
+        ttl: u8,
+    ) error{PayloadTooLarge}!Packet {
         if (payload.len > std.math.maxInt(u16))
             return error.PayloadTooLarge;
         return .{
